@@ -2,27 +2,20 @@
 // handler: the socket peer comes from `server.requestIP` (the one address Bun vouches for), the
 // env from Bun.env, and there is no waitUntil — a long-lived process polls on a timer and drains
 // on exit instead. Bun has no per-request context object, so the Request itself keys the slot.
-import type { Server } from 'bun';
 import { TAP_BUN, guarded } from '@camada/core';
-import { createFetchCamada, withSetCookie, type FetchCamada, type FetchCamadaOptions, type FetchVars } from '@camada/core/fetch';
+import { createFetchCamada, withSetCookie, track as coreTrack, scriptTag as coreScriptTag, type FetchCamada, type FetchCamadaOptions, type FetchVars } from '@camada/core/fetch';
 import iife from '@camada/browser/iife-string';
 import { SDK_ID } from './version.js';
 
-/** The one thing the wrapper needs from Bun's server; any `Bun.Server<T>` satisfies it. */
-export type BunServer = Pick<Server<unknown>, 'requestIP'>;
-export type BunHandler<S extends BunServer = BunServer> = (req: Request, server: S) => Response | Promise<Response>;
+/** The one thing the wrapper needs from Bun's server, typed structurally so the emitted types need no `bun` import; any `Bun.Server` satisfies it. */
+export interface BunServer { requestIP(req: Request): { address: string } | null }
+/** A Bun fetch handler. `undefined`/`void` is what Bun's own websocket pattern returns after `server.upgrade(req)`. */
+export type BunHandler<S extends BunServer = BunServer, R extends Response | undefined | void = Response> = (req: Request, server: S) => R | Promise<R>;
 export type CamadaBunOptions = FetchCamadaOptions;
 export type CamadaBunVars = FetchVars;
 
-interface Slot { cam: FetchCamada; vars: FetchVars }
-const slots = new WeakMap<Request, Slot>();   // set only when the app is about to run; camada's own answers leave nothing
+const slots = new WeakMap<Request, FetchVars>();   // set only when the app is about to run; camada's own answers leave nothing
 const instances = new Set<FetchCamada>();
-
-/** Bun.env is process.env under Bun; the fallback covers this suite running under Node. */
-const hostEnv = (): Record<string, string | undefined> | undefined => {
-  const g = globalThis as { Bun?: { env?: Record<string, string | undefined> }; process?: { env?: Record<string, string | undefined> } };
-  return g.Bun?.env ?? g.process?.env;
-};
 
 /**
  * Builds one camada instance and returns `wrap`, which turns a Bun fetch handler into a guarded
@@ -32,17 +25,23 @@ const hostEnv = (): Record<string, string | undefined> | undefined => {
 export function camada(opts: CamadaBunOptions = {}) {
   const cam = createFetchCamada({ tap: TAP_BUN, sdk: SDK_ID, iife }, { ...opts, mode: opts.mode ?? 'timer' });
   instances.add(cam);
-  return function wrap<S extends BunServer>(handler: BunHandler<S>): (req: Request, server: S) => Promise<Response> {
+  return function wrap<S extends BunServer, R extends Response | undefined | void>(handler: BunHandler<S, R>): (req: Request, server: S) => Promise<Response | R> {
     return async (req, server) => {
       // Guarded: a runtime that is not Bun (or a Bun without a socket for this request) hands us
       // no peer rather than a throw. Client headers are core's to judge under the trusted-proxy rules.
       const peer = guarded(() => server?.requestIP?.(req)?.address ?? null, null);
-      const env = guarded(hostEnv, undefined);
-      const r = await cam.before(req, { peer, env });
+      const r = await cam.before(req, { peer, env: globalThis.Bun?.env ?? globalThis.process?.env });   // Bun.env is process.env under Bun; the fallback is this suite under Node
       if (!r) return handler(req, server);
       if (r.response) return r.response;
-      slots.set(req, { cam, vars: r.vars });
-      const res = await handler(req, server);
+      slots.set(req, r.vars);
+      let res: R;
+      try {
+        res = await handler(req, server);
+      } catch (err) {
+        cam.after(req, r.vars, null);   // Bun's `error` callback decides the status; camada cannot see it
+        throw err;
+      }
+      if (!res) { cam.after(req, r.vars, null); return res; }   // a websocket upgrade: Bun owns the 101, there is no Response to carry a cookie
       cam.after(req, r.vars, res.status);
       return r.vars.sessionCookie ? withSetCookie(res, r.vars.sessionCookie) : res;
     };
@@ -51,16 +50,10 @@ export function camada(opts: CamadaBunOptions = {}) {
 
 /** An outcome the wire cannot show (`login_failed`, `signup`, …) joined to this request's event;
  *  the user is HMAC-hashed in-process. A silent no-op where the wrapper did not run. */
-export function track(req: Request, event: string, data?: { user?: string }): Promise<void> {
-  const s = guarded(() => slots.get(req), undefined);
-  return s ? s.cam.track(s.vars, event, data) : Promise.resolve();
-}
+export const track = (req: Request, event: string, data?: { user?: string }): Promise<void> => coreTrack(slots.get(req), event, data);
 
 /** The beacon `<script>` tag for an HTML response — `''` where the wrapper did not run or the tenant turned the beacon off. */
-export function scriptTag(req: Request): string {
-  const s = guarded(() => slots.get(req), undefined);
-  return s ? s.cam.scriptTag(s.vars) : '';
-}
+export const scriptTag = (req: Request): string => coreScriptTag(slots.get(req));
 
 /** Test/reset hook: stops every poller and exit handler of every instance this module created. */
 export function resetCamada(): void {
