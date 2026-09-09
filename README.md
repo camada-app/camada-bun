@@ -78,10 +78,10 @@ unprovisioned environment behaves exactly as if camada were not installed.
    onto a `Response.redirect()`, whose headers are immutable — the response is rebuilt around
    the same body), and the settled response ships one batched, redacted event with its real
    status (Authorization and Cookie values never leave the process — see `@camada/core`). A
-   handler that throws ships the event with `st: null` and the error goes on to Bun's `error`
-   callback, which owns the status; a handler that returns nothing after `server.upgrade(req)`
-   (Bun's WebSocket pattern) is passed through the same way — the `101` is Bun's, so the event
-   ships with `st: null` and no cookie.
+   handler that throws ships the event with `st: 500` — what Bun answers for it — and the error
+   goes on to Bun's `error` callback (a callback that answers with another status is not seen
+   here); a handler that returns nothing after `server.upgrade(req)` (Bun's WebSocket pattern)
+   is passed through and ships `st: 101`, with no Response to carry a cookie.
 
 ## Options
 
