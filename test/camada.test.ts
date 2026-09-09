@@ -111,14 +111,14 @@ describe('capture', () => {
 });
 
 describe('the handler', () => {
-  it('ships st null and rethrows when it throws — Bun\'s error callback owns the status', async () => {
+  it('ships st 500 and rethrows when it throws — Bun answers a thrown handler with 500', async () => {
     const a = await primed();
     await expect(call(a, '/boom', { headers: { cookie: '_sfp=known-sid' } })).rejects.toThrow('boom');
     await settle();
-    expect(events).toEqual([expect.objectContaining({ p: '/boom', st: null, sid: 'known-sid', tap: 'sdk-bun' })]);
+    expect(events).toEqual([expect.objectContaining({ p: '/boom', st: 500, sid: 'known-sid', tap: 'sdk-bun' })]);
   });
 
-  it('passes an upgrade through (the handler returns nothing after server.upgrade) and ships st null', async () => {
+  it('passes an upgrade through (the handler returns nothing after server.upgrade) and ships st 101', async () => {
     const guard = camada({ env: ENV, fetchImpl });
     const ws = guard((req, server: BunServer & { upgrade(req: Request): boolean }) => { if (server.upgrade(req)) return; return new Response('no ws', { status: 426 }); });
     const upgrading = { ...server('8.8.8.8'), upgrade: () => true };
@@ -127,7 +127,7 @@ describe('the handler', () => {
     events.length = 0;
     expect(await ws(new Request('http://app.test/ws', { headers: { upgrade: 'websocket' } }), upgrading)).toBeUndefined();
     await settle();
-    expect(events).toEqual([expect.objectContaining({ p: '/ws', st: null })]);
+    expect(events).toEqual([expect.objectContaining({ p: '/ws', st: 101 })]);
     expect((await ws(new Request('http://app.test/ws'), { ...upgrading, upgrade: () => false }))?.status).toBe(426);
     expect((await ws(new Request('http://app.test/ws'), { ...upgrading, upgrade: () => true, requestIP: () => ({ address: BLOCKED_IP }) }))?.status).toBe(403);   // enforcement comes first
   });

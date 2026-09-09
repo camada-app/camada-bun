@@ -38,10 +38,10 @@ export function camada(opts: CamadaBunOptions = {}) {
       try {
         res = await handler(req, server);
       } catch (err) {
-        cam.after(req, r.vars, null);   // Bun's `error` callback decides the status; camada cannot see it
+        cam.after(req, r.vars, 500);   // Bun answers 500 for a thrown handler (an `error` callback returning its own status is not visible here)
         throw err;
       }
-      if (!res) { cam.after(req, r.vars, null); return res; }   // a websocket upgrade: Bun owns the 101, there is no Response to carry a cookie
+      if (!res) { cam.after(req, r.vars, 101); return res; }   // a websocket upgrade: Bun answers 101 itself, so there is no Response to carry a cookie
       cam.after(req, r.vars, res.status);
       return r.vars.sessionCookie ? withSetCookie(res, r.vars.sessionCookie) : res;
     };
