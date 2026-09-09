@@ -77,7 +77,11 @@ unprovisioned environment behaves exactly as if camada were not installed.
 7. Otherwise your handler runs, the `_sfp` session cookie is appended on a first visit (also
    onto a `Response.redirect()`, whose headers are immutable — the response is rebuilt around
    the same body), and the settled response ships one batched, redacted event with its real
-   status (Authorization and Cookie values never leave the process — see `@camada/core`).
+   status (Authorization and Cookie values never leave the process — see `@camada/core`). A
+   handler that throws ships the event with `st: null` and the error goes on to Bun's `error`
+   callback, which owns the status; a handler that returns nothing after `server.upgrade(req)`
+   (Bun's WebSocket pattern) is passed through the same way — the `101` is Bun's, so the event
+   ships with `st: null` and no cookie.
 
 ## Options
 
@@ -92,7 +96,7 @@ unprovisioned environment behaves exactly as if camada were not installed.
 | `snapshotVersion` | `5` | `4` drops the custom rules, `3` the allow/challenge sides too |
 | `scriptPath` | `/_cam/b.js` | where the first-party beacon script is served |
 | `fpPath` | `/_cam/fp` | where that script posts the beacon; keep it in `scriptPath`'s directory |
-| `mode` | `timer` | `timer` polls the snapshot on an interval; `lazy` refreshes per request (`CAMADA_SERVERLESS=1` forces it) |
+| `mode` | `timer` (or `lazy`) | `timer` polls the snapshot on an unref'd interval (long-lived process); `lazy` refreshes it per request off-path. `CAMADA_SERVERLESS=1` forces `lazy` |
 | `env` | `Bun.env` | overrides the host env (tests, and apps that read config themselves) |
 
 `CAMADA_CHALLENGE=0` in the env switches the challenge off without a code change.
@@ -113,7 +117,8 @@ Bun.serve({
 ```
 
 `scriptTag(req)` returns `<script src="/_cam/b.js?r=<rid>" async></script>` — the `rid` is this
-request's event id, so the analyst joins the beacon to the page view. The wrapper serves the
+request's event id, so the analyst joins the beacon to the page view. `scriptTag` and `track`
+find their request by the `Request` object Bun handed you — pass that one, not a `clone()`. The wrapper serves the
 script at `GET /_cam/b.js` (cacheable, 1 h) and relays `POST /_cam/fp` (≤ 32 KB, answers 204)
 onto the event batch as a `sig: 1` row stamped with the client ip camada resolved — never the
 one the body claims. Both endpoints sit behind the verdict: a blocked client gets 403 there
@@ -163,8 +168,7 @@ fact — the socket address from `server.requestIP` — and nothing else: no ASN
 fingerprint (those rules never match here), no client protocol (the event's `proto` is null; a
 forwarded protocol header is never read for it), and `Headers` normalises order, so the
 raw-wire-order signal is not available either. The analyst knows all of that from the tap's
-capability mask (`sdk-bun`) and never scores an absence as evidence. Behind a proxy, set
-`trustedProxy` (or `CAMADA_TRUSTED_PROXY`) so the client behind it is the one enforced.
+capability mask (`sdk-bun`) and never scores an absence as evidence.
 
 ## Fail open
 
@@ -173,5 +177,5 @@ package: telemetry is lost, the request is not.
 
 ## Tests
 
-`npm test` runs the suite under vitest in Node with a stub `server`; `bun test` runs the same
-file under Bun (it rewrites the `vitest` import to `bun:test`).
+`npm test` runs the suite under vitest in Node with a stub `server` (the two snapshot-mode tests
+use vitest's fake timers, which `bun test` does not provide).

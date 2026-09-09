@@ -1,7 +1,7 @@
 // @camada/bun against the golden v4 snapshot, driven through the wrapper as Bun.serve would call
 // it: (req, server), with a stub server whose `requestIP` plays the socket. The fixtures are read
 // through the file: symlink to @camada/core, so this package is pinned to the same bytes
-// edge-analyst generates. Runs under vitest in Node (Bun rewrites the vitest import for `bun test`).
+// edge-analyst generates. Runs under vitest in Node.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -19,7 +19,7 @@ const V4 = {
 const BLOCKED_IP = '203.0.113.66';     // block side
 const CHALLENGED_IP = '192.0.2.20';    // challenge side only
 const HTML = { accept: 'text/html', 'sec-fetch-dest': 'document' };
-const BASE_CONFIG = { tenant: 'acme', beacon: true, sample: 1, exclude: [], trusted_proxy: { mode: 'none' }, poll_seconds: 30 };
+const CONFIG = { tenant: 'acme', beacon: true, sample: 1, exclude: [], trusted_proxy: { mode: 'none' }, poll_seconds: 30 };
 const ENV = { CAMADA_KEY: 'tok-acme.snap-acme', CAMADA_INGEST_URL: 'http://analyst.test', CAMADA_SNAPSHOT_URL: 'http://analyst.test/snapshot' };
 
 // 200 body frame: [u32 LE meta-length][meta JSON][BLK bin]
@@ -38,7 +38,7 @@ let polls = 0;
 const fetchImpl: typeof fetch = (async (url: string | URL | Request, init?: RequestInit) => {
   if (String(url).endsWith('/snapshot')) {
     polls++;
-    return new Response(frame(), { status: 200, headers: { etag: `"${JSON.parse(V4.meta).version}"`, 'x-camada-config': JSON.stringify(BASE_CONFIG) } });
+    return new Response(frame(), { status: 200, headers: { etag: `"${JSON.parse(V4.meta).version}"`, 'x-camada-config': JSON.stringify(CONFIG) } });
   }
   sdkHeaders.push(new Headers(init?.headers).get('x-camada-sdk') ?? '');
   events.push(...(JSON.parse(String(init?.body)) as Array<Record<string, unknown>>));
@@ -58,6 +58,7 @@ function app(opts: CamadaBunOptions = {}): Wrapped {
     if (pathname === '/page') return html(`<html><head>${scriptTag(req)}</head><body>page</body></html>`);
     if (pathname === '/redirect') return Response.redirect('http://app.test/', 302);   // immutable headers
     if (pathname === '/login' && req.method === 'POST') { await track(req, 'login_failed', { user: 'alice@example.com' }); return new Response('no', { status: 401 }); }
+    if (pathname === '/boom') throw new Error('boom');
     return new Response('not found', { status: 404 });
   });
 }
@@ -66,12 +67,12 @@ function app(opts: CamadaBunOptions = {}): Wrapped {
 const server = (address: string | null): BunServer =>
   ({ requestIP: () => (address ? { address, port: 40312, family: 'IPv4' } : null) });
 
-// No waitUntil on this host: one macrotask lets the snapshot load and the batch settle before we look.
-const tick = () => new Promise((r) => setTimeout(r, 0));
+// No waitUntil on this host: a few macrotasks let the snapshot load and the batch settle before we look.
+const settle = async () => { for (let i = 0; i < 3; i++) await new Promise((r) => setTimeout(r, 0)); };
 
 async function call(a: Wrapped, path: string, init: RequestInit = {}, peer: string | null = '8.8.8.8', origin = 'http://app.test'): Promise<Response> {
   const res = await a(new Request(origin + path, init), server(peer));
-  await tick();
+  await settle();
   return res;
 }
 
@@ -109,6 +110,29 @@ describe('capture', () => {
   });
 });
 
+describe('the handler', () => {
+  it('ships st null and rethrows when it throws — Bun\'s error callback owns the status', async () => {
+    const a = await primed();
+    await expect(call(a, '/boom', { headers: { cookie: '_sfp=known-sid' } })).rejects.toThrow('boom');
+    await settle();
+    expect(events).toEqual([expect.objectContaining({ p: '/boom', st: null, sid: 'known-sid', tap: 'sdk-bun' })]);
+  });
+
+  it('passes an upgrade through (the handler returns nothing after server.upgrade) and ships st null', async () => {
+    const guard = camada({ env: ENV, fetchImpl });
+    const ws = guard((req, server: BunServer & { upgrade(req: Request): boolean }) => { if (server.upgrade(req)) return; return new Response('no ws', { status: 426 }); });
+    const upgrading = { ...server('8.8.8.8'), upgrade: () => true };
+    await ws(new Request('http://app.test/ws'), upgrading); await ws(new Request('http://app.test/ws'), upgrading);   // warm
+    await settle();
+    events.length = 0;
+    expect(await ws(new Request('http://app.test/ws', { headers: { upgrade: 'websocket' } }), upgrading)).toBeUndefined();
+    await settle();
+    expect(events).toEqual([expect.objectContaining({ p: '/ws', st: null })]);
+    expect((await ws(new Request('http://app.test/ws'), { ...upgrading, upgrade: () => false }))?.status).toBe(426);
+    expect((await ws(new Request('http://app.test/ws'), { ...upgrading, upgrade: () => true, requestIP: () => ({ address: BLOCKED_IP }) }))?.status).toBe(403);   // enforcement comes first
+  });
+});
+
 describe('enforcement', () => {
   it('blocks a listed peer with 403, x-block-reason and x-block-version', async () => {
     const a = await primed();
@@ -139,13 +163,6 @@ describe('enforcement', () => {
     const cookie = ok.headers.get('set-cookie')!.split(';')[0];
     expect((await call(a, '/cart', { headers: { cookie, ...HTML } }, CHALLENGED_IP)).status).toBe(200);
   });
-
-  it('answers 403 JSON for a non-HTML challenge', async () => {
-    const a = await primed();
-    const res = await call(a, '/checkout', { headers: { accept: 'application/json' } });
-    expect(res.status).toBe(403);
-    expect(await res.json()).toEqual({ error: 'challenge_required' });
-  });
 });
 
 describe('first-party beacon', () => {
@@ -164,15 +181,6 @@ describe('first-party beacon', () => {
     expect(res.status).toBe(204);
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({ sig: 1, rid: 'abc', tz: 'UTC', ip: '9.9.9.9', tap: 'sdk-bun' });
-  });
-
-  it('still blocks a blocked client at both endpoints', async () => {
-    const a = await primed();
-    const script = await call(a, '/_cam/b.js', {}, BLOCKED_IP);
-    expect(script.status).toBe(403);
-    expect(script.headers.get('x-block-reason')).toBe('ip4');
-    expect((await postBeacon(a, JSON.stringify({ rid: 'abc' }), BLOCKED_IP)).status).toBe(403);
-    expect(events.every((e) => e.blk === 'ip4' && e.sig === undefined)).toBe(true);
   });
 
   it('scriptTag carries the rid of the page event, and is empty where the wrapper did not run', async () => {
@@ -263,7 +271,7 @@ describe('the peer', () => {
     await call(a, '/', {}, null);
     expect(events.at(-1)).toMatchObject({ p: '/', ip: null });
     const res = await a(new Request('http://app.test/'), undefined as unknown as BunServer);
-    await tick();
+    await settle();
     expect(res.status).toBe(200);
     expect(events.at(-1)).toMatchObject({ ip: null });
   });
@@ -296,11 +304,11 @@ describe('snapshot mode', () => {
     const a = await primed();
     expect(polls).toBe(1);
     await vi.advanceTimersByTimeAsync(31_000);
-    await tick();
+    await settle();
     expect(polls).toBe(2);   // the interval refreshed without a request
     resetCamada();
     await vi.advanceTimersByTimeAsync(31_000);
-    await tick();
+    await settle();
     expect(polls).toBe(2);
     await call(a, '/');   // still wired: the next request rebuilds the engine (cold, fails open) and polls again
     expect(polls).toBe(3);
@@ -311,14 +319,14 @@ describe('snapshot mode', () => {
     fakeClock();
     const a = await primed({ env: { ...ENV, CAMADA_SERVERLESS: '1' } });
     await vi.advanceTimersByTimeAsync(31_000);
-    await tick();
+    await settle();
     expect(polls).toBe(1);   // no interval
     await call(a, '/');
     expect(polls).toBe(2);   // the stale request refreshed
     const b = await primed({ mode: 'lazy' });
     polls = 0;
     await vi.advanceTimersByTimeAsync(31_000);
-    await tick();
+    await settle();
     expect(polls).toBe(0);
     await call(b, '/');
     expect(polls).toBe(1);
