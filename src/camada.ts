@@ -42,8 +42,7 @@ export function camada(opts: CamadaBunOptions = {}) {
         throw err;
       }
       if (!res) { cam.after(req, r.vars, 101); return res; }   // a websocket upgrade: Bun answers 101 itself, so there is no Response to carry a cookie
-      cam.after(req, r.vars, res.status);
-      return r.vars.sessionCookie ? withSetCookie(res, r.vars.sessionCookie) : res;
+      return cam.finish(req, r.vars, r.vars.sessionCookie ? withSetCookie(res, r.vars.sessionCookie) : res);   // ships once the body has gone out
     };
   };
 }
