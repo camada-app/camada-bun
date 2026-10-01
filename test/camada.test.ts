@@ -72,8 +72,9 @@ const settle = async () => { for (let i = 0; i < 3; i++) await new Promise((r) =
 
 async function call(a: Wrapped, path: string, init: RequestInit = {}, peer: string | null = '8.8.8.8', origin = 'http://app.test'): Promise<Response> {
   const res = await a(new Request(origin + path, init), server(peer));
+  const body = res?.body ? await res.arrayBuffer() : null;   // send the body as the host would: the event ships once it has gone out
   await settle();
-  return res;
+  return res && new Response(body, res);
 }
 
 /** The first request is cold (fail open) and loads the snapshot. */
@@ -106,7 +107,7 @@ describe('capture', () => {
     await call(a, '/nope');
     expect(events.at(-1)).toMatchObject({ p: '/nope', st: 404 });
     expect(sdkHeaders.length).toBeGreaterThan(0);
-    expect(sdkHeaders.every((h) => h === '@camada/bun/0.1.1')).toBe(true);
+    expect(sdkHeaders.every((h) => h === '@camada/bun/0.1.2')).toBe(true);
   });
 });
 
