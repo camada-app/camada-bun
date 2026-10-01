@@ -8,7 +8,9 @@ from `server.requestIP`, the env from `Bun.env`, and the snapshot polls on a tim
 server lives long enough to have one. Fails open by design — a camada outage or bug never 5xxes
 your app.
 
-Not yet on npm — consumed via a `file:` dependency from a sibling checkout.
+```sh
+bun add @camada/bun
+```
 
 ## Quickstart
 
