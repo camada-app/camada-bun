@@ -98,6 +98,18 @@ beforeEach(() => { events = []; sdkHeaders = []; polls = 0; });
 afterEach(() => { resetCamada(); vi.useRealTimers(); });
 
 describe('capture', () => {
+  it('sets x-rid to the event rid on answered responses (an immutable redirect included) and not on a block', async () => {
+    const a = await primed();
+    for (const path of ['/cart', '/redirect']) {
+      const res = await call(a, path);
+      expect(res.headers.get('x-rid'), path).toBe(events.find((e) => e.p === path)!.rid);
+    }
+    expect((await call(a, '/redirect')).headers.get('location')).toBe('http://app.test/');
+    const blocked = await call(a, '/', {}, BLOCKED_IP);
+    expect(blocked.status).toBe(403);
+    expect(blocked.headers.has('x-rid')).toBe(false);
+  });
+
   it('lets an unlisted request through and ships the event with the real status, the bun tap and this SDK id', async () => {
     const a = await primed();
     const res = await call(a, '/');
