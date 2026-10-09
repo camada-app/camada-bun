@@ -119,7 +119,7 @@ describe('capture', () => {
     await call(a, '/nope');
     expect(events.at(-1)).toMatchObject({ p: '/nope', st: 404 });
     expect(sdkHeaders.length).toBeGreaterThan(0);
-    expect(sdkHeaders.every((h) => h === '@camada/bun/0.1.2')).toBe(true);
+    expect(sdkHeaders.every((h) => h === '@camada/bun/0.1.3')).toBe(true);
   });
 });
 
