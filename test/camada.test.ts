@@ -49,8 +49,9 @@ type Wrapped = (req: Request, server: BunServer) => Promise<Response>;
 const html = (s: string) => new Response(s, { headers: { 'content-type': 'text/html' } });
 
 /** The app Bun.serve would run, wrapped the way the README shows. */
+// Lazy by default here: a timer-mode host with no waitUntil batches rows for the 15 s flush (camada-all-7u3r), and these tests read the event as soon as the request settles. The timer-mode tests ask for it.
 function app(opts: CamadaBunOptions = {}): Wrapped {
-  return camada({ env: ENV, fetchImpl, ...opts })(async (req) => {
+  return camada({ env: ENV, fetchImpl, mode: 'lazy', ...opts })(async (req) => {
     const { pathname } = new URL(req.url);
     if (pathname === '/') return new Response('home');
     if (pathname === '/cart') return html('<p>cart</p>');
@@ -132,7 +133,7 @@ describe('the handler', () => {
   });
 
   it('passes an upgrade through (the handler returns nothing after server.upgrade) and ships st 101', async () => {
-    const guard = camada({ env: ENV, fetchImpl });
+    const guard = camada({ env: ENV, fetchImpl, mode: 'lazy' });
     const ws = guard((req, server: BunServer & { upgrade(req: Request): boolean }) => { if (server.upgrade(req)) return; return new Response('no ws', { status: 426 }); });
     const upgrading = { ...server('8.8.8.8'), upgrade: () => true };
     await ws(new Request('http://app.test/ws'), upgrading); await ws(new Request('http://app.test/ws'), upgrading);   // warm
@@ -314,7 +315,7 @@ describe('snapshot mode', () => {
 
   it('polls on its own in timer mode, and resetCamada() stops the poller', async () => {
     fakeClock();
-    const a = await primed();
+    const a = await primed({ mode: 'timer' });
     expect(polls).toBe(1);
     await vi.advanceTimersByTimeAsync(31_000);
     await settle();
