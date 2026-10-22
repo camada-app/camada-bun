@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- A non-HTML request under a challenge verdict now reaches your handler instead of getting `403 {"error":"challenge_required"}`. The response carries `x-camada-challenge: 1` and `cache-control: no-store`, and the event carries `chs: 1`, so your frontend can choose to challenge. Needs the `@camada/core` that carries this change. (camada-all-60f8)
+
 ## 0.1.4 (2026-10-12; follows 0.1.3)
 
 ### Fixed
