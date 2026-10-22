@@ -75,7 +75,8 @@ unprovisioned environment behaves exactly as if camada were not installed.
 5. **Skip** → a skip rule or the allow list wins over a wider block.
 6. **Challenge** → a `403` proof-of-work page: no external assets, `no-store`, an inline SHA-256
    solver that posts to `POST /__camada/challenge`, which sets `_cch` (an HMAC token bound to
-   the client ip, 1 h) and 302s back. Non-HTML requests get `403 {"error":"challenge_required"}`.
+   the client ip, 1 h) and 302s back. API and `fetch()` calls pass to your handler with
+   `x-camada-challenge: 1` on the response (and `chs: 1` on the event) so your frontend can choose to challenge.
 7. Otherwise your handler runs, the `_sfp` session cookie is appended on a first visit (also
    onto a `Response.redirect()`, whose headers are immutable — the response is rebuilt around
    the same body), and the settled response ships one batched, redacted event with its real

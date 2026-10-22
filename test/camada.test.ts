@@ -177,6 +177,16 @@ describe('enforcement', () => {
     const cookie = ok.headers.get('set-cookie')!.split(';')[0];
     expect((await call(a, '/cart', { headers: { cookie, ...HTML } }, CHALLENGED_IP)).status).toBe(200);
   });
+
+  it('passes a non-HTML request under a challenge verdict to the app, flagged x-camada-challenge and chs:1', async () => {
+    const a = await primed();
+    const res = await call(a, '/', { headers: { accept: 'application/json' } }, CHALLENGED_IP);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('home');
+    expect(res.headers.get('x-camada-challenge')).toBe('1');
+    expect(res.headers.get('cache-control')).toBe('no-store');
+    expect(events.some((e) => e.st === 200 && e.chs === 1 && e.ip === CHALLENGED_IP)).toBe(true);
+  });
 });
 
 describe('first-party beacon', () => {
