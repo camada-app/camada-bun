@@ -1,11 +1,13 @@
 # @camada/bun
 
+[Frameworks](https://www.camada.app/frameworks) · [Docs](https://www.camada.app/docs) · [Bot detection](https://www.camada.app/bot-detection) · [Bot signal test](https://www.camada.app/tools/bot-test) · [Pricing](https://www.camada.app/pricing).
+
 camada for [Bun.serve](https://bun.sh/docs/api/http): enforces the tenant snapshot inline (your
 ordered custom rules, then block, allow, challenge), serves a first-party proof-of-work challenge
 page and beacon, records the outcomes your handlers know (`track()`), and ships wire events in
 batches off the response path. A thin binding over `@camada/core/fetch`: the socket peer comes
 from `server.requestIP`, the env from `Bun.env`, and the snapshot polls on a timer because a Bun
-server lives long enough to have one. Fails open by design — a camada outage or bug never 5xxes
+server lives long enough to have one. Fails open by design: a camada outage or bug never 5xxes
 your app.
 
 ```sh
@@ -63,7 +65,7 @@ unprovisioned environment behaves exactly as if camada were not installed.
    and drains the event queue on `beforeExit`, `SIGTERM` and `SIGINT`. `mode: 'lazy'` or
    `CAMADA_SERVERLESS=1` refreshes per request instead, for a Bun that is not a long-lived
    process. Every poll and event batch carries `x-camada-sdk: @camada/bun/<version>`, and polls
-   ask for snapshot v5 (`x-camada-snapshot: 5`) — the container that carries your ordered
+   ask for snapshot v5 (`x-camada-snapshot: 5`), the container that carries your ordered
    custom rules.
 2. Resolves the client from the socket Bun vouches for (`server.requestIP(req)`), then
    `X-Forwarded-For` under your tenant's trusted-proxy config. No header is ever trusted on its
@@ -78,10 +80,10 @@ unprovisioned environment behaves exactly as if camada were not installed.
    the client ip, 1 h) and 302s back. API and `fetch()` calls pass to your handler with
    `x-camada-challenge: 1` on the response (and `chs: 1` on the event) so your frontend can choose to challenge.
 7. Otherwise your handler runs, the `_sfp` session cookie is appended on a first visit (also
-   onto a `Response.redirect()`, whose headers are immutable — the response is rebuilt around
+   onto a `Response.redirect()`, whose headers are immutable: the response is rebuilt around
    the same body), and the settled response ships one batched, redacted event with its real
-   status (Authorization and Cookie values never leave the process — see `@camada/core`). A
-   handler that throws ships the event with `st: 500` — what Bun answers for it — and the error
+   status (Authorization and Cookie values never leave the process; see `@camada/core`). A
+   handler that throws ships the event with `st: 500` (what Bun answers for it), and the error
    goes on to Bun's `error` callback (a callback that answers with another status is not seen
    here); a handler that returns nothing after `server.upgrade(req)` (Bun's WebSocket pattern)
    is passed through and ships `st: 101`, with no Response to carry a cookie.
@@ -119,17 +121,17 @@ Bun.serve({
 });
 ```
 
-`scriptTag(req)` returns `<script src="/_cam/b.js?r=<rid>" async></script>` — the `rid` is this
+`scriptTag(req)` returns `<script src="/_cam/b.js?r=<rid>" async></script>`: the `rid` is this
 request's event id, so the analyst joins the beacon to the page view. `scriptTag` and `track`
-find their request by the `Request` object Bun handed you — pass that one, not a `clone()`. The wrapper serves the
+find their request by the `Request` object Bun handed you; pass that one, not a `clone()`. The wrapper serves the
 script at `GET /_cam/b.js` (cacheable, 1 h) and relays `POST /_cam/fp` (≤ 32 KB, answers 204)
-onto the event batch as a `sig: 1` row stamped with the client ip camada resolved — never the
+onto the event batch as a `sig: 1` row stamped with the client ip camada resolved, never the
 one the body claims. Both endpoints sit behind the verdict: a blocked client gets 403 there
 too. The tag is `''` when camada is off for the request or the project turned the beacon off
 in its settings, and the endpoints stand down with it.
 
-With `routes`, the two paths are answered by whichever wrapped handler Bun dispatches to — the
-fallback `fetch` in the example above — so wrap the fallback even when every route is wrapped.
+With `routes`, the two paths are answered by whichever wrapped handler Bun dispatches to (the
+fallback `fetch` in the example above), so wrap the fallback even when every route is wrapped.
 Moving them (`camada({ scriptPath: '/api/_cam/b.js', fpPath: '/api/_cam/fp' })`) keeps the
 same rule: the script derives the post path from its own `src`, so the two must share a directory.
 
@@ -150,7 +152,7 @@ Bun.serve({
 ```
 
 `track(req, event, { user? })` ships `{ et, uid, rid, sid, ip, ts }` joined to this request's
-event. The user identifier is HMAC-hashed in-process with the ingest token — the raw value never
+event. The user identifier is HMAC-hashed in-process with the ingest token: the raw value never
 leaves the process. It never throws and is a no-op where the wrapper did not run. The event name
 is free-form; the analyst's rules read this vocabulary:
 
@@ -167,7 +169,7 @@ is free-form; the analyst's rules read this vocabulary:
 
 This is the in-app position: the beacon, the client hints the browser sends, the real response
 status, the `_sfp` session and the app context from `track()`. Bun vouches for one connection
-fact — the socket address from `server.requestIP` — and nothing else: no ASN, country or TLS
+fact (`server.requestIP` socket address) and nothing else: no ASN, country or TLS
 fingerprint (those rules never match here), no client protocol (the event's `proto` is null; a
 forwarded protocol header is never read for it), and `Headers` normalises order, so the
 raw-wire-order signal is not available either.
@@ -181,3 +183,13 @@ package: telemetry is lost, the request is not.
 
 `npm test` runs the suite under vitest in Node with a stub `server` (the two snapshot-mode tests
 use vitest's fake timers, which `bun test` does not provide).
+
+## Docs and links
+
+Read the guides on [camada.app](https://www.camada.app/docs).
+
+- [Frameworks](https://www.camada.app/frameworks): browse all server SDKs and Web-fetch adapters.
+- [Custom rules](https://www.camada.app/docs/rules) and [Challenge](https://www.camada.app/docs/challenge): order your rules and tune browser checks.
+- [Bot detection](https://www.camada.app/bot-detection): see how snapshots, beacons, and `track()` catch bots.
+- [Bot signal test](https://www.camada.app/tools/bot-test): check live browser, HTTP, and TLS signals from your client.
+- [Pricing](https://www.camada.app/pricing): compare the free tier and paid plans.
