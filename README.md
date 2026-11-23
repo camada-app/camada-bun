@@ -82,7 +82,8 @@ unprovisioned environment behaves exactly as if camada were not installed.
 7. Otherwise your handler runs, the `_sfp` session cookie is appended on a first visit (also
    onto a `Response.redirect()`, whose headers are immutable: the response is rebuilt around
    the same body), and the settled response ships one batched, redacted event with its real
-   status (Authorization and Cookie values never leave the process; see `@camada/core`). A
+   status. Authorization contributes its scheme and, with opt-in `tokenHash`, a keyed
+   credential hash as `tk`. Authorization and Cookie values stay in the process. A
    handler that throws ships the event with `st: 500` (what Bun answers for it), and the error
    goes on to Bun's `error` callback (a callback that answers with another status is not seen
    here); a handler that returns nothing after `server.upgrade(req)` (Bun's WebSocket pattern)
@@ -107,6 +108,26 @@ unprovisioned environment behaves exactly as if camada were not installed.
 `CAMADA_CHALLENGE=0` in the env switches the challenge off without a code change.
 
 `CAMADA_DISABLED=1` in the env switches everything off, checked per request.
+
+## Credential hash (opt-in, off by default)
+
+Set `tokenHash: true` or `CAMADA_TOKEN_HASH=1` to include `tk` on request
+events with an eligible credential. An explicit `tokenHash: false` overrides
+the environment variable.
+
+`tk` is the first 32 hex characters of HMAC-SHA256, keyed with your ingest
+token, over `tok:` plus the credential. The credential is the part of
+`Authorization` after the scheme (for example, the Bearer token). Set
+`tokenHeader: 'x-api-key'` or `CAMADA_TOKEN_HEADER` to prefer the whole value
+of that header when it contains an eligible credential. The credential itself
+stays in the process. Values shorter than 8 characters or outside printable
+ASCII are skipped.
+
+camada uses `tk` to spot one credential replayed from many clients. Enable it
+for random tokens or API keys. Avoid enabling it for human passwords over
+Basic auth because anyone holding both your events and your ingest token
+could test password guesses against the hash. Rotating the ingest token
+changes every `tk`.
 
 ## The first-party beacon
 
